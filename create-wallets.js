@@ -1,6 +1,15 @@
+// Import Web3 library for Ethereum interaction
 const Web3 = require('web3');
-// Initialize Web3 with your Ethereum node URL (Infura, local node, etc.)
 const web3 = new Web3("Your_RPC_URL");
+
+// Global configuration for gas and timing parameters
+const CONFIG = {
+    GAS_LIMIT: '21000',      // Standard ETH transfer gas limit
+    CONFIRMATION_ATTEMPTS: 20, // Number of attempts to confirm a transaction
+    RETRY_COUNT: 3,          // Number of retry attempts for failed operations
+    BATCH_DELAY: 1000,       // Delay between processing batches (1 second)
+    CONFIRMATION_DELAY: 3000  // Delay between confirmation checks (3 seconds)
+};
 
 /**
  * WalletManager class handles creation and management of multiple Ethereum wallets
@@ -13,10 +22,16 @@ class WalletManager {
      * @param {number} batchSize - Number of wallets to process in each batch (default: 50)
      */
     constructor(mainPrivateKey, batchSize = 50) {
+        // Store the private key of the main funding wallet
         this.mainPrivateKey = mainPrivateKey;
+        // Convert private key to an Ethereum account object
         this.mainWallet = web3.eth.accounts.privateKeyToAccount(mainPrivateKey);
+        // Number of wallets to process in each batch
         this.batchSize = batchSize;
+        // Array to store created wallet objects
         this.wallets = [];
+        // Track transaction nonce for the main wallet
+        this.currentNonce = null;
     }
 
     /**
@@ -25,12 +40,12 @@ class WalletManager {
      * @returns {Promise<boolean>} - True if sufficient balance, throws error if insufficient
      */
     async checkMainBalance(requiredAmount) {
-        // Get current balance of main wallet
+        // Get current balance in Wei (smallest ETH unit)
         const balance = await web3.eth.getBalance(this.mainWallet.address);
-        // Convert required amount to Wei (smallest ETH unit)
+        // Convert required amount from ETH to Wei for comparison
         const requiredWei = web3.utils.toWei((requiredAmount).toString(), "ether");
         
-        // Compare balance with required amount using BigNumber comparison
+        // Use BigNumber comparison to avoid floating-point issues
         if (web3.utils.toBN(balance).lt(web3.utils.toBN(requiredWei))) {
             throw new Error(`Insufficient balance. Required: ${requiredAmount} ETH, Available: ${web3.utils.fromWei(balance, "ether")} ETH`);
         }
@@ -41,29 +56,43 @@ class WalletManager {
      * Wait for transaction confirmation and verify success
      * @param {string} txHash - Transaction hash to monitor
      * @param {number} maxAttempts - Maximum number of confirmation check attempts
+     * @param {number} retryCount - Number of retry attempts
      * @returns {Promise<object>} - Transaction receipt or throws error
      */
-    async waitForConfirmation(txHash, maxAttempts = 20) {
-        let attempts = 0;
-        while (attempts < maxAttempts) {
+    async waitForConfirmation(txHash, maxAttempts = 20, retryCount = 3) {
+        // Outer loop for retry attempts if confirmation fails
+        for (let retry = 0; retry < retryCount; retry++) {
             try {
-                // Get transaction receipt from network
-                const receipt = await web3.eth.getTransactionReceipt(txHash);
-                
-                // Check if transaction is confirmed and successful
-                if (receipt && receipt.status) {
-                    return receipt;
-                } else if (receipt && !receipt.status) {
-                    throw new Error(`Transaction failed: ${txHash}`);
+                let attempts = 0;
+                // Inner loop for checking transaction confirmation
+                while (attempts < maxAttempts) {
+                    try {
+                        const receipt = await web3.eth.getTransactionReceipt(txHash);
+                        
+                        // Transaction confirmed and successful
+                        if (receipt && receipt.status) {
+                            return receipt;
+                        } 
+                        // Transaction confirmed but failed
+                        else if (receipt && !receipt.status) {
+                            throw new Error(`Transaction failed: ${txHash}`);
+                        }
+                        // Transaction not yet confirmed - will retry
+                    } catch (error) {
+                        console.error(`Error checking transaction ${txHash}:`, error);
+                    }
+                    attempts++;
+                    // Wait between confirmation checks
+                    await new Promise(resolve => setTimeout(resolve, 3000));
                 }
+                throw new Error(`Transaction confirmation timeout: ${txHash}`);
             } catch (error) {
-                console.error(`Error checking transaction ${txHash}:`, error);
+                // If this was the last retry, throw the error
+                if (retry === retryCount - 1) throw error;
+                // Otherwise wait and try again
+                await new Promise(resolve => setTimeout(resolve, 5000));
             }
-            attempts++;
-            // Wait 3 seconds between checks to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 3000));
         }
-        throw new Error(`Transaction confirmation timeout: ${txHash}`);
     }
 
     /**
@@ -73,12 +102,12 @@ class WalletManager {
      */
     async createWallets(count) {
         const newWallets = [];
+        // Create specified number of new Ethereum accounts
         for (let i = 0; i < count; i++) {
-            // Create new Ethereum account
             const wallet = web3.eth.accounts.create();
             newWallets.push(wallet);
         }
-        // Add new wallets to internal wallet array
+        // Add new wallets to the internal tracking array
         this.wallets = this.wallets.concat(newWallets);
         return newWallets;
     }
@@ -91,25 +120,26 @@ class WalletManager {
      * @returns {Promise<object>} - Results of funding and return operations
      */
     async processBatch(wallets, fundAmount, returnPercentage = 95) {
-        // Get current gas price for all transactions in batch
+        // Get current gas price for all transactions in this batch
         const gasPrice = await web3.eth.getGasPrice();
-        // Convert amounts to Wei
+        // Convert ETH amounts to Wei
         const fundValue = web3.utils.toWei(fundAmount.toString(), "ether");
         const returnValue = web3.utils.toWei((fundAmount * returnPercentage / 100).toString(), "ether");
 
-        // Create array of promises for funding transactions
+        // Step 1: Fund all wallets in parallel
         const fundPromises = wallets.map(async (wallet) => {
             try {
-                // Prepare funding transaction
+                // Create funding transaction
                 const tx = {
                     from: this.mainWallet.address,
                     to: wallet.address,
                     value: fundValue,
                     gas: "210000",
-                    gasPrice: gasPrice
+                    gasPrice: gasPrice,
+                    nonce: await this.getNextNonce()
                 };
 
-                // Sign and send funding transaction
+                // Sign and send the transaction
                 const signed = await this.mainWallet.signTransaction(tx);
                 const receipt = await web3.eth.sendSignedTransaction(signed.rawTransaction);
                 await this.waitForConfirmation(receipt.transactionHash);
@@ -122,24 +152,24 @@ class WalletManager {
         // Wait for all funding transactions to complete
         const fundResults = await Promise.all(fundPromises);
 
-        // Filter for successfully funded wallets
+        // Step 2: Return funds from successfully funded wallets
         const successfullyFunded = fundResults
             .filter(result => result.success)
             .map(result => result.wallet);
 
-        // Create array of promises for return transactions
         const returnPromises = successfullyFunded.map(async (wallet) => {
             try {
-                // Prepare return transaction
+                // Create return transaction
                 const tx = {
                     from: wallet.address,
                     to: this.mainWallet.address,
                     value: returnValue,
                     gas: "210000",
-                    gasPrice: gasPrice
+                    gasPrice: gasPrice,
+                    nonce: await this.getNextNonce()
                 };
 
-                // Sign and send return transaction
+                // Sign and send the return transaction
                 const signed = await wallet.signTransaction(tx);
                 const receipt = await web3.eth.sendSignedTransaction(signed.rawTransaction);
                 await this.waitForConfirmation(receipt.transactionHash);
@@ -161,9 +191,21 @@ class WalletManager {
      * @returns {Promise<object>} - Summary of operations results
      */
     async createAndManageWallets(walletCount, fundAmount) {
+        // Add input validation
+        if (!Number.isInteger(walletCount) || walletCount <= 0) {
+            throw new Error('Wallet count must be a positive integer');
+        }
+        if (typeof fundAmount !== 'number' || fundAmount <= 0) {
+            throw new Error('Fund amount must be a positive number');
+        }
         try {
             // Calculate total ETH needed including estimated gas costs
-            const estimatedGasCost = 0.01 * walletCount; // Rough estimate
+            const gasLimit = 21000;
+            const gasPrice = await web3.eth.getGasPrice();
+            const estimatedGasCost = web3.utils.fromWei(
+                web3.utils.toBN(gasPrice).mul(web3.utils.toBN(gasLimit * 2 * walletCount)),
+                'ether'
+            );
             const totalRequired = (fundAmount * walletCount) + estimatedGasCost;
             
             // Verify sufficient balance
@@ -222,6 +264,17 @@ class WalletManager {
         } catch (error) {
             throw new Error(`Wallet creation failed: ${error.message}`);
         }
+    }
+
+    /**
+     * Get and increment nonce for the main wallet
+     * @returns {Promise<number>} - Next nonce for the main wallet
+     */
+    async getNextNonce() {
+        if (this.currentNonce === null) {
+            this.currentNonce = await web3.eth.getTransactionCount(this.mainWallet.address);
+        }
+        return this.currentNonce++;
     }
 }
 
