@@ -1,60 +1,90 @@
-Ethereum Wallet Manager
+
+## Ethereum Wallet Manager
+
 A robust Node.js application for creating, funding, and managing multiple Ethereum wallets in batches. This tool allows for efficient creation of multiple wallets, funding them from a main wallet, and returning specified portions of the funds.
-Features
+
+
+## Features
 
 ✨ Batch wallet creation and management
+
 💰 Automated funding of new wallets
+
 ↩️ Automatic fund return functionality
+
 ⚡ Efficient batch processing
+
 🔍 Transaction confirmation monitoring
+
 🛡️ Built-in error handling and recovery
+
 📊 Detailed operation reporting
 
-Prerequisites
+
+## Prerequisites
 
 Node.js (v12.0.0 or higher)
+
 npm or yarn
+
 An Ethereum node URL (Infura, local node, etc.)
+
 A funded Ethereum wallet to use as the main wallet
 
-Installation
+## Installation
 
-Clone the repository or create a new directory:
+1. Clone the repository or create a new directory:
 
-bashCopymkdir ethereum-wallet-manager
-cd ethereum-wallet-manager
+```bash
+  mkdir ethereum-wallet-manager
+  cd ethereum-wallet-manager
+```
+    
+2. Initialize a new Node.js project:
 
-Initialize a new Node.js project:
+```bash
+  npm init -y
+```
 
-bashCopynpm init -y
+3. Install required dependencies:
 
-Install required dependencies:
+```bash
+npm install web3
+```
 
-bashCopynpm install web3
+4. Create the main script file:
 
-Create the main script file:
+```bash
+touch wallet-manager.js
+```
 
-bashCopytouch wallet-manager.js
+5. Copy the provided code into wallet-manager.js
+## Configuration
 
-Copy the provided code into wallet-manager.js
-
-Configuration
 Before running the script, you need to configure the following:
 
-Update the RPC URL in the Web3 initialization:
-
+1. Update the RPC URL in the Web3 initialization:
+```bash
 javascriptCopyconst web3 = new Web3("Your_RPC_URL");
+```
 
-Set your main wallet's private key:
-
+2. Set your main wallet's private key:
+```bash
 javascriptCopyconst manager = new WalletManager("Your_Main_Private_Key", 50);
+```
 
-Adjust batch size if needed (default is 50):
-
+3. Adjust batch size if needed (default is 50):
+```bash
 javascriptCopyconst batchSize = 50; // Modify as needed
-Usage
-Basic Usage
-javascriptCopyasync function main() {
+```
+
+
+## Usage
+
+To deploy this project run
+
+```bash
+async function main() {
     try {
         // Create manager instance
         const manager = new WalletManager("Your_Main_Private_Key", 50);
@@ -71,41 +101,26 @@ javascriptCopyasync function main() {
 }
 
 main();
+```
+
 Running the Script
-bashCopynode wallet-manager.js
+
+```bash
+node wallet-manager.js
+```
+
 Class Methods
+```bash
 WalletManager
+```
+
 Constructor
-javascriptCopyconst manager = new WalletManager(mainPrivateKey, batchSize);
 
-mainPrivateKey: Private key of the funding wallet
-batchSize: Number of wallets to process in each batch (default: 50)
-
-checkMainBalance(requiredAmount)
-Verifies if the main wallet has sufficient balance for operations.
-
-requiredAmount: Total ETH needed for all operations
-
-createWallets(count)
-Creates specified number of new Ethereum wallets.
-
-count: Number of wallets to create
-
-processBatch(wallets, fundAmount, returnPercentage)
-Processes a batch of wallets - funding and return operations.
-
-wallets: Array of wallet objects
-fundAmount: Amount of ETH to send to each wallet
-returnPercentage: Percentage of funds to return (default: 95)
-
-createAndManageWallets(walletCount, fundAmount)
-Main function to orchestrate wallet creation and management.
-
-walletCount: Total number of wallets to create
-fundAmount: Amount of ETH to send to each wallet
-
-Response Format
-The script returns an object with the following structure:
+```bash
+const manager = new WalletManager(mainPrivateKey, batchSize);
+```
+## Response Format
+```bash
 javascriptCopy{
     successful: [], // Array of successful wallet addresses
     failed: [     // Array of failed operations
@@ -117,86 +132,76 @@ javascriptCopy{
     ],
     created: 0    // Total number of wallets created
 }
-Error Handling
+```
+
+
+# Error Handling
+
 The script includes comprehensive error handling for:
 
-Insufficient balance
+### Insufficient balance
+
 Failed transactions
+
 Network issues
+
 Transaction timeouts
+
 Invalid parameters
 
-Gas Management
+### Gas Management
 
 Dynamic gas price fetching
+
 Configurable gas limits
+
 Estimated gas cost calculation
 
-Monitoring and Logging
+### Monitoring and Logging
 The script provides detailed logging of:
 
 Batch processing progress
+
 Transaction success/failure
+
 Error details
+
 Operation statistics
 
-Best Practices
+### Best Practices
 
-Start with a small batch size (20-50) to test the script
-Monitor gas prices and adjust accordingly
-Ensure main wallet has sufficient funds including gas costs
-Use a reliable Ethereum node/RPC provider
-Keep private keys secure and never commit them to code
+1. Start with a small batch size (20-50) to test the script
+2. Monitor gas prices and adjust accordingly
+3. Ensure main wallet has sufficient funds including gas costs
+4. Use a reliable Ethereum node/RPC provider
+5. Keep private keys secure and never commit them to code
 
-Security Considerations
+### Security Considerations
 
-Never share or expose private keys
-Test with small amounts first
-Monitor transactions for unexpected behavior
-Keep track of created wallets and their states
-Implement additional security measures for production use
+1. Never share or expose private keys
+2. Test with small amounts first
+3. Monitor transactions for unexpected behavior
+4. Keep track of created wallets and their states
+4. Implement additional security measures for production use
 
-Limitations
+### Limitations
 
-Network congestion can affect processing time
-Gas costs may vary significantly
-Rate limiting by RPC provider may occur
-Large batches may require significant funds
-
-Troubleshooting
-Common issues and solutions:
-
-Insufficient Funds
-
-Ensure main wallet has enough ETH for all operations including gas
-Reduce batch size or number of wallets
-
-
-Transaction Timeouts
-
-Increase maxAttempts in waitForConfirmation
-Check network congestion
-Verify RPC node stability
-
-
-High Gas Costs
-
-Adjust gas price calculation
-Process during low network usage periods
-Reduce batch size
-
-
-RPC Errors
-
-Verify RPC URL
-Check RPC provider status
-Consider using a different provider
+1. Network congestion can affect processing time
+2. Gas costs may vary significantly
+3. Rate limiting by RPC provider may occur
+4. Large batches may require significant funds
 
 
 
-Contributing
+
+## Contributing
+
+
 Feel free to submit issues and enhancement requests!
-License
+contact@ithd.co.uk
+
+### License
 MIT License - feel free to use and modify for your own purposes.
-Disclaimer
+
+### Disclaimer
 This tool is provided for educational purposes. Use at your own risk. Always test thoroughly before using with significant amounts of ETH.
