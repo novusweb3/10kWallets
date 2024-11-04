@@ -1,18 +1,40 @@
 // Import Web3 library for Ethereum interaction
 const Web3 = require('web3');
-const web3 = new Web3("Your_RPC_URL");
+const web3 = new Web3(process.env.RPC_URL);
 
 // Global configuration for gas and timing parameters
 const CONFIG = {
     GAS_LIMIT: '21000',      // Standard ETH transfer gas limit
     CONFIRMATION_ATTEMPTS: 20, // Number of attempts to confirm a transaction
     RETRY_COUNT: 3,          // Number of retry attempts for failed operations
-    BATCH_DELAY: 1000,       // Delay between processing batches (1 second)
-    CONFIRMATION_DELAY: 3000  // Delay between confirmation checks (3 seconds)
+    BATCH_DELAY: parseInt(process.env.BATCH_DELAY || '1000'),
+    CONFIRMATION_DELAY: parseInt(process.env.CONFIRMATION_DELAY || '3000'),
+    CONCURRENT_TRANSACTIONS: parseInt(process.env.CONCURRENT_TRANSACTIONS || '5')
 };
 
 // Add Rate Limiting Package
 const pLimit = require('p-limit');
+
+// Configure logger
+const winston = require('winston');
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.File({ filename: 'error.log', level: 'error' }),
+        new winston.transports.File({ filename: 'combined.log' })
+    ]
+});
+
+// Add to production environment only
+if (process.env.NODE_ENV !== 'production') {
+    logger.add(new winston.transports.Console({
+        format: winston.format.simple()
+    }));
+}
 
 /**
  * WalletManager class handles creation and management of multiple Ethereum wallets
@@ -35,6 +57,15 @@ class WalletManager {
         this.wallets = [];
         // Track transaction nonce for the main wallet
         this.currentNonce = null;
+
+        // Add performance monitoring
+        this.metrics = {
+            startTime: null,
+            endTime: null,
+            successfulTransactions: 0,
+            failedTransactions: 0,
+            gasUsed: web3.utils.toBN(0)
+        };
     }
 
     /**
@@ -125,8 +156,8 @@ class WalletManager {
             const fundValue = web3.utils.toWei(fundAmount.toString(), "ether");
             const returnValue = web3.utils.toWei((fundAmount * returnPercentage / 100).toString(), "ether");
 
-            // Add rate limiting for concurrent transactions
-            const limit = pLimit(5); // Process 5 transactions at a time
+            // Create rate limiter with configurable concurrency
+            const limit = pLimit(CONFIG.CONCURRENT_TRANSACTIONS);
 
             // Step 1: Fund wallets with rate limiting
             const fundPromises = wallets.map(wallet => 
@@ -196,7 +227,12 @@ class WalletManager {
             const returnResults = await Promise.all(returnPromises);
             return { fundResults, returnResults };
         } catch (error) {
-            console.error('Batch processing error:', error);
+            logger.error('Batch processing error', {
+                error: error.message,
+                stack: error.stack,
+                walletCount: wallets.length,
+                fundAmount
+            });
             throw error;
         }
     }
@@ -299,6 +335,33 @@ class WalletManager {
             throw error;
         }
     }
+
+    // Add performance monitoring method
+    async trackMetrics(operation, success, gasUsed) {
+        if (!this.metrics.startTime) {
+            this.metrics.startTime = Date.now();
+        }
+        
+        if (success) {
+            this.metrics.successfulTransactions++;
+            this.metrics.gasUsed = this.metrics.gasUsed.add(web3.utils.toBN(gasUsed));
+        } else {
+            this.metrics.failedTransactions++;
+        }
+    }
+
+    // Add method to get performance report
+    getPerformanceReport() {
+        this.metrics.endTime = Date.now();
+        const duration = (this.metrics.endTime - this.metrics.startTime) / 1000; // in seconds
+        
+        return {
+            duration: `${duration} seconds`,
+            successRate: `${(this.metrics.successfulTransactions / (this.metrics.successfulTransactions + this.metrics.failedTransactions) * 100).toFixed(2)}%`,
+            totalGasUsed: this.metrics.gasUsed.toString(),
+            averageTimePerTransaction: `${(duration / (this.metrics.successfulTransactions + this.metrics.failedTransactions)).toFixed(2)} seconds`
+        };
+    }
 }
 
 /**
@@ -307,11 +370,19 @@ class WalletManager {
  */
 async function main() {
     try {
-        // Initialize manager with main wallet private key and batch size of 50
-        const manager = new WalletManager("Your_Main_Private_Key", 50);
+        if (!process.env.MAIN_PRIVATE_KEY) {
+            throw new Error('Missing MAIN_PRIVATE_KEY in environment variables');
+        }
         
-        // Create and manage 10000 wallets, funding each with 0.001 ETH
-        const results = await manager.createAndManageWallets(10000, 0.001);
+        const manager = new WalletManager(
+            process.env.MAIN_PRIVATE_KEY,
+            parseInt(process.env.BATCH_SIZE || '50')
+        );
+        
+        const walletCount = parseInt(process.env.WALLET_COUNT || '10000');
+        const fundAmount = parseFloat(process.env.FUND_AMOUNT || '0.001');
+        
+        const results = await manager.createAndManageWallets(walletCount, fundAmount);
         
         // Log results
         console.log("Wallet creation completed:");
