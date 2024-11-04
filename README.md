@@ -49,7 +49,7 @@ A funded Ethereum wallet to use as the main wallet
 3. Install required dependencies:
 
 ```bash
-npm install web3
+npm install p-limit web3
 ```
 
 4. Create the main script file:
