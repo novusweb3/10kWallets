@@ -11,6 +11,9 @@ const CONFIG = {
     CONFIRMATION_DELAY: 3000  // Delay between confirmation checks (3 seconds)
 };
 
+// Add Rate Limiting Package
+const pLimit = require('p-limit');
+
 /**
  * WalletManager class handles creation and management of multiple Ethereum wallets
  * Includes funding operations and return transactions
@@ -59,37 +62,34 @@ class WalletManager {
      * @param {number} retryCount - Number of retry attempts
      * @returns {Promise<object>} - Transaction receipt or throws error
      */
-    async waitForConfirmation(txHash, maxAttempts = 20, retryCount = 3) {
-        // Outer loop for retry attempts if confirmation fails
+    async waitForConfirmation(txHash, maxAttempts = CONFIG.CONFIRMATION_ATTEMPTS, retryCount = CONFIG.RETRY_COUNT) {
         for (let retry = 0; retry < retryCount; retry++) {
             try {
+                console.log(`Waiting for confirmation of tx ${txHash} (attempt ${retry + 1}/${retryCount})`);
                 let attempts = 0;
-                // Inner loop for checking transaction confirmation
+                
                 while (attempts < maxAttempts) {
                     try {
                         const receipt = await web3.eth.getTransactionReceipt(txHash);
                         
-                        // Transaction confirmed and successful
                         if (receipt && receipt.status) {
+                            console.log(`Transaction ${txHash} confirmed successfully`);
                             return receipt;
-                        } 
-                        // Transaction confirmed but failed
-                        else if (receipt && !receipt.status) {
-                            throw new Error(`Transaction failed: ${txHash}`);
+                        } else if (receipt && !receipt.status) {
+                            throw new Error(`Transaction ${txHash} failed on-chain`);
                         }
-                        // Transaction not yet confirmed - will retry
                     } catch (error) {
                         console.error(`Error checking transaction ${txHash}:`, error);
                     }
+                    
                     attempts++;
-                    // Wait between confirmation checks
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    await new Promise(resolve => setTimeout(resolve, CONFIG.CONFIRMATION_DELAY));
                 }
+                
                 throw new Error(`Transaction confirmation timeout: ${txHash}`);
             } catch (error) {
-                // If this was the last retry, throw the error
                 if (retry === retryCount - 1) throw error;
-                // Otherwise wait and try again
+                console.log(`Retrying confirmation check for ${txHash}...`);
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
@@ -120,68 +120,85 @@ class WalletManager {
      * @returns {Promise<object>} - Results of funding and return operations
      */
     async processBatch(wallets, fundAmount, returnPercentage = 95) {
-        // Get current gas price for all transactions in this batch
-        const gasPrice = await web3.eth.getGasPrice();
-        // Convert ETH amounts to Wei
-        const fundValue = web3.utils.toWei(fundAmount.toString(), "ether");
-        const returnValue = web3.utils.toWei((fundAmount * returnPercentage / 100).toString(), "ether");
+        try {
+            const gasPrice = await web3.eth.getGasPrice();
+            const fundValue = web3.utils.toWei(fundAmount.toString(), "ether");
+            const returnValue = web3.utils.toWei((fundAmount * returnPercentage / 100).toString(), "ether");
 
-        // Step 1: Fund all wallets in parallel
-        const fundPromises = wallets.map(async (wallet) => {
-            try {
-                // Create funding transaction
-                const tx = {
-                    from: this.mainWallet.address,
-                    to: wallet.address,
-                    value: fundValue,
-                    gas: "210000",
-                    gasPrice: gasPrice,
-                    nonce: await this.getNextNonce()
-                };
+            // Add rate limiting for concurrent transactions
+            const limit = pLimit(5); // Process 5 transactions at a time
 
-                // Sign and send the transaction
-                const signed = await this.mainWallet.signTransaction(tx);
-                const receipt = await web3.eth.sendSignedTransaction(signed.rawTransaction);
-                await this.waitForConfirmation(receipt.transactionHash);
-                return { success: true, wallet, type: 'fund' };
-            } catch (error) {
-                return { success: false, wallet, error, type: 'fund' };
-            }
-        });
+            // Step 1: Fund wallets with rate limiting
+            const fundPromises = wallets.map(wallet => 
+                limit(async () => {
+                    try {
+                        console.log(`Funding wallet: ${wallet.address}`);
+                        const tx = {
+                            from: this.mainWallet.address,
+                            to: wallet.address,
+                            value: fundValue,
+                            gas: CONFIG.GAS_LIMIT,
+                            gasPrice: gasPrice,
+                            nonce: await this.getNextNonce()
+                        };
 
-        // Wait for all funding transactions to complete
-        const fundResults = await Promise.all(fundPromises);
+                        const signed = await this.mainWallet.signTransaction(tx);
+                        const receipt = await web3.eth.sendSignedTransaction(signed.rawTransaction);
+                        await this.waitForConfirmation(receipt.transactionHash);
+                        
+                        console.log(`Successfully funded wallet: ${wallet.address}`);
+                        return { success: true, wallet, type: 'fund' };
+                    } catch (error) {
+                        console.error(`Failed to fund wallet ${wallet.address}:`, error);
+                        return { success: false, wallet, error: error.message, type: 'fund' };
+                    }
+                })
+            );
 
-        // Step 2: Return funds from successfully funded wallets
-        const successfullyFunded = fundResults
-            .filter(result => result.success)
-            .map(result => result.wallet);
+            const fundResults = await Promise.all(fundPromises);
 
-        const returnPromises = successfullyFunded.map(async (wallet) => {
-            try {
-                // Create return transaction
-                const tx = {
-                    from: wallet.address,
-                    to: this.mainWallet.address,
-                    value: returnValue,
-                    gas: "210000",
-                    gasPrice: gasPrice,
-                    nonce: await this.getNextNonce()
-                };
+            // Step 2: Return funds with rate limiting
+            const successfullyFunded = fundResults
+                .filter(result => result.success)
+                .map(result => result.wallet);
 
-                // Sign and send the return transaction
-                const signed = await wallet.signTransaction(tx);
-                const receipt = await web3.eth.sendSignedTransaction(signed.rawTransaction);
-                await this.waitForConfirmation(receipt.transactionHash);
-                return { success: true, wallet, type: 'return' };
-            } catch (error) {
-                return { success: false, wallet, error, type: 'return' };
-            }
-        });
+            const returnPromises = successfullyFunded.map(wallet =>
+                limit(async () => {
+                    try {
+                        console.log(`Returning funds from wallet: ${wallet.address}`);
+                        // Calculate the actual return amount (subtracting gas costs)
+                        const gasNeeded = web3.utils.toBN(CONFIG.GAS_LIMIT).mul(web3.utils.toBN(gasPrice));
+                        const actualReturnValue = web3.utils.toBN(returnValue).sub(gasNeeded);
 
-        // Wait for all return transactions to complete
-        const returnResults = await Promise.all(returnPromises);
-        return { fundResults, returnResults };
+                        const tx = {
+                            from: wallet.address,
+                            to: this.mainWallet.address,
+                            value: actualReturnValue.toString(),
+                            gas: CONFIG.GAS_LIMIT,
+                            gasPrice: gasPrice,
+                            nonce: '0' // New wallets always start with nonce 0
+                        };
+
+                        // Properly sign the transaction using the wallet's private key
+                        const signed = await web3.eth.accounts.signTransaction(tx, wallet.privateKey);
+                        const receipt = await web3.eth.sendSignedTransaction(signed.rawTransaction);
+                        await this.waitForConfirmation(receipt.transactionHash);
+
+                        console.log(`Successfully returned funds from wallet: ${wallet.address}`);
+                        return { success: true, wallet, type: 'return' };
+                    } catch (error) {
+                        console.error(`Failed to return funds from wallet ${wallet.address}:`, error);
+                        return { success: false, wallet, error: error.message, type: 'return' };
+                    }
+                })
+            );
+
+            const returnResults = await Promise.all(returnPromises);
+            return { fundResults, returnResults };
+        } catch (error) {
+            console.error('Batch processing error:', error);
+            throw error;
+        }
     }
 
     /**
@@ -271,10 +288,16 @@ class WalletManager {
      * @returns {Promise<number>} - Next nonce for the main wallet
      */
     async getNextNonce() {
-        if (this.currentNonce === null) {
-            this.currentNonce = await web3.eth.getTransactionCount(this.mainWallet.address);
+        try {
+            // Always get fresh nonce from network to prevent conflicts
+            this.currentNonce = await web3.eth.getTransactionCount(this.mainWallet.address, 'pending');
+            const nonce = this.currentNonce;
+            this.currentNonce++;
+            return nonce;
+        } catch (error) {
+            console.error('Error getting nonce:', error);
+            throw error;
         }
-        return this.currentNonce++;
     }
 }
 
