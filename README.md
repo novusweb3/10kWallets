@@ -31,108 +31,37 @@ An Ethereum node URL (Infura, local node, etc.)
 
 A funded Ethereum wallet to use as the main wallet
 
-## Installation
 
-1. Clone the repository or create a new directory:
+## Setup
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-```bash
-  mkdir ethereum-wallet-manager
-  cd ethereum-wallet-manager
-```
-    
-2. Initialize a new Node.js project:
+2. Create .env file with required variables:
+   - RPC_URL
+   - MAIN_PRIVATE_KEY
+   - WALLET_COUNT
+   - FUND_AMOUNT
+   - BATCH_SIZE
+   - CONCURRENT_TRANSACTIONS
 
-```bash
-  npm init -y
-```
+3. Run the script:
+   ```bash
+   node app/create-wallets.js
+   ```
 
-3. Install required dependencies:
-
-```bash
-npm install p-limit web3
-```
-
-4. Create the main script file:
-
-```bash
-touch wallet-manager.js
-```
-
-5. Copy the provided code into wallet-manager.js
 ## Configuration
+- Adjust CONCURRENT_TRANSACTIONS based on your RPC provider's limits
+- Monitor error.log and combined.log for detailed operation logs
+- Use NODE_ENV=production for production deployment
 
-Before running the script, you need to configure the following:
-
-1. Update the RPC URL in the Web3 initialization:
-```bash
-javascriptCopyconst web3 = new Web3("Your_RPC_URL");
-```
-
-2. Set your main wallet's private key:
-```bash
-javascriptCopyconst manager = new WalletManager("Your_Main_Private_Key", 50);
-```
-
-3. Adjust batch size if needed (default is 50):
-```bash
-javascriptCopyconst batchSize = 50; // Modify as needed
-```
+## Security
+- Never commit .env file
+- Use secure key management in production
+- Monitor gas prices and adjust accordingly
 
 
-## Usage
-
-To deploy this project run
-
-```bash
-async function main() {
-    try {
-        // Create manager instance
-        const manager = new WalletManager("Your_Main_Private_Key", 50);
-        
-        // Create and manage 10000 wallets with 0.001 ETH each
-        const results = await manager.createAndManageWallets(10000, 0.001);
-        
-        console.log(`Total wallets created: ${results.created}`);
-        console.log(`Successful transactions: ${results.successful.length}`);
-        console.log(`Failed transactions: ${results.failed.length}`);
-    } catch (error) {
-        console.error("Error in wallet management:", error.message);
-    }
-}
-
-main();
-```
-
-Running the Script
-
-```bash
-node wallet-manager.js
-```
-
-Class Methods
-```bash
-WalletManager
-```
-
-Constructor
-
-```bash
-const manager = new WalletManager(mainPrivateKey, batchSize);
-```
-## Response Format
-```bash
-javascriptCopy{
-    successful: [], // Array of successful wallet addresses
-    failed: [     // Array of failed operations
-        {
-            address: "0x...",
-            error: "error message",
-            stage: "funding/returning"
-        }
-    ],
-    created: 0    // Total number of wallets created
-}
-```
 
 
 # Error Handling
